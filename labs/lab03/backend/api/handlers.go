@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
+	"io"
 	"lab03-backend/models"
 	"lab03-backend/storage"
 	"net/http"
@@ -34,6 +35,7 @@ func (h *Handler) SetupRoutes() *mux.Router {
 	api.HandleFunc("/messages/{id}", h.DeleteMessage).Methods("DELETE")
 	api.HandleFunc("/status/{code}", h.GetHTTPStatus).Methods("GET")
 	api.HandleFunc("/health", h.HealthCheck).Methods("GET")
+	api.HandleFunc("/cat/{code}", h.GetStatusImage).Methods("GET")
 
 	return r
 }
@@ -129,7 +131,7 @@ func (h *Handler) GetHTTPStatus(w http.ResponseWriter, r *http.Request) {
 
 	resp := models.HTTPStatusResponse{
 		StatusCode:  code,
-		ImageURL:    fmt.Sprintf("https://http.cat/%d", code),
+		ImageURL:    fmt.Sprintf("http://localhost:8080/api/cat/%d", code),
 		Description: getHTTPStatusDescription(code),
 	}
 	h.writeJSON(w, http.StatusOK, models.APIResponse{
@@ -138,11 +140,33 @@ func (h *Handler) GetHTTPStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetStatusImage proxies an image from http.cat
+func (h *Handler) GetStatusImage(w http.ResponseWriter, r *http.Request) {
+	codeStr := mux.Vars(r)["code"]
+	code, err := strconv.Atoi(codeStr)
+	if err != nil || code < 100 || code > 599 {
+		http.Error(w, "Invalid status code", http.StatusBadRequest)
+		return
+	}
+
+	imageURL := fmt.Sprintf("https://http.cat/%d", code)
+	resp, err := http.Get(imageURL)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		http.Error(w, "Failed to fetch image", http.StatusNotFound)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, resp.Body)
+}
+
 // HealthCheck handles GET /api/health
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	total := h.storage.Count()
 	response := map[string]interface{}{
-		"status":         "ok",
+		"status":         "healthy",
 		"message":        "API is running",
 		"timestamp":      time.Now().Unix(),
 		"total_messages": total,
@@ -198,7 +222,7 @@ func getHTTPStatusDescription(code int) string {
 // corsMiddleware adds CORS headers
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
